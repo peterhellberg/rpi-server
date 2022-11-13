@@ -16,9 +16,10 @@ import (
 
 	evdev "github.com/MaitreDede/golang-evdev"
 	graphql "github.com/c7/graphql"
-	screen "github.com/nathany/bobblehat/sense/screen"
 	color "github.com/nathany/bobblehat/sense/screen/color"
 	gfx "github.com/peterhellberg/gfx"
+
+	screen "rpi-server/screen"
 )
 
 const tibberGraphqlEndpoint = "https://api.tibber.com/v1-beta/gql"
@@ -39,7 +40,7 @@ const tibberCurrentPriceQuery = `{
   }
 }`
 
-var framebuffer = screen.NewFrameBuffer()
+var framebuffer *screen.FrameBuffer
 
 func clear() {
 	framebuffer = screen.NewFrameBuffer()
@@ -55,20 +56,10 @@ func main() {
 
 	flag.Parse()
 
-	clear()
-
 	// Setup the logger
 	logger := log.New(os.Stdout, "", 0)
 
 	handleSignals(logger)
-
-	device, err := openInputDevice(path)
-	if err != nil {
-		logger.Printf("Unable to open input device: %s\nError: %v\n", path, err)
-		os.Exit(1)
-	}
-
-	logger.Println(device)
 
 	server := newServer(
 		logWith(logger),
@@ -78,55 +69,73 @@ func main() {
 
 	hs := setup(logger, server)
 
-	go hs.ListenAndServe()
+	if path == "" {
+		fmt.Println(hs.ListenAndServe())
+	} else {
+		go hs.ListenAndServe()
+	}
 
 	var toggle bool
 
-	for {
-		events, err := device.Read()
+	if path != "" {
+		screen.Init()
+
+		device, err := openInputDevice(path)
 		if err != nil {
-			fmt.Printf("device.Read() Error: %v\n", err)
+			logger.Printf("Unable to open input device: %s\nError: %v\n", path, err)
 			os.Exit(1)
 		}
 
-		for _, ev := range events {
-			switch ev.Type {
-			case evdev.EV_KEY:
-				ke := evdev.NewKeyEvent(&ev)
+		logger.Println(device)
 
-				if ke.State != evdev.KeyDown {
-					continue
-				}
+		clear()
 
-				// Create a new framebuffer
-				fb := screen.NewFrameBuffer()
+		for {
+			events, err := device.Read()
+			if err != nil {
+				fmt.Printf("device.Read() Error: %v\n", err)
+				os.Exit(1)
+			}
 
-				switch ke.Scancode {
-				case evdev.KEY_ENTER:
-					toggle = !toggle
+			for _, ev := range events {
+				switch ev.Type {
+				case evdev.EV_KEY:
+					ke := evdev.NewKeyEvent(&ev)
 
-					fmt.Println("[ENTER]", toggle)
-
-					if toggle {
-						draw(fb, 0, 0, 8, 8, color.New(255, 255, 255))
+					if ke.State != evdev.KeyDown {
+						continue
 					}
-				case evdev.KEY_UP:
-					fmt.Println("[UP] YELLOW")
-					draw(fb, 0, 0, 8, 4, color.New(255, 255, 0))
-				case evdev.KEY_DOWN:
-					fmt.Println("[DOWN] RED")
-					draw(fb, 0, 4, 8, 8, color.New(255, 0, 0))
-				case evdev.KEY_LEFT:
-					fmt.Println("[LEFT] BLUE")
-					draw(fb, 0, 0, 4, 8, color.New(0, 0, 255))
-				case evdev.KEY_RIGHT:
-					fmt.Println("[RIGHT] GREEN")
-					draw(fb, 4, 0, 8, 8, color.New(0, 128, 0))
+
+					// Create a new framebuffer
+					fb := screen.NewFrameBuffer()
+
+					switch ke.Scancode {
+					case evdev.KEY_ENTER:
+						toggle = !toggle
+
+						fmt.Println("[ENTER]", toggle)
+
+						if toggle {
+							draw(fb, 0, 0, 8, 8, color.New(255, 255, 255))
+						}
+					case evdev.KEY_UP:
+						fmt.Println("[UP] YELLOW")
+						draw(fb, 0, 0, 8, 4, color.New(255, 255, 0))
+					case evdev.KEY_DOWN:
+						fmt.Println("[DOWN] RED")
+						draw(fb, 0, 4, 8, 8, color.New(255, 0, 0))
+					case evdev.KEY_LEFT:
+						fmt.Println("[LEFT] BLUE")
+						draw(fb, 0, 0, 4, 8, color.New(0, 0, 255))
+					case evdev.KEY_RIGHT:
+						fmt.Println("[RIGHT] GREEN")
+						draw(fb, 4, 0, 8, 8, color.New(0, 128, 0))
+					}
+
+					framebuffer = fb
+
+					screen.Draw(fb)
 				}
-
-				framebuffer = fb
-
-				screen.Draw(fb)
 			}
 		}
 	}
@@ -147,8 +156,12 @@ func handleSignals(logger *log.Logger) {
 
 	go func() {
 		for range c {
-			logger.Println("Clearing the screen...")
-			clear()
+			if framebuffer != nil {
+				logger.Println("Clearing the screen...")
+
+				clear()
+			}
+
 			os.Exit(0)
 		}
 	}()
@@ -221,7 +234,7 @@ func kofiKeyFromEnv() Option {
 
 func tibberTokenFromEnv() Option {
 	return func(s *Server) {
-		s.kofiKey = os.Getenv("TIBBER_TOKEN")
+		s.tibberToken = os.Getenv("TIBBER_TOKEN")
 	}
 }
 
@@ -250,8 +263,8 @@ type tibberCurrentPrice struct {
 	Tax    float64
 }
 
-type tibberCurrentPriceResp struct {
-	Data struct {
+func (s *Server) tibberCurrentPrice(ctx context.Context) (tibberCurrentPrice, error) {
+	var resp struct {
 		Viewer struct {
 			Home struct {
 				CurrentSubscription struct {
@@ -262,10 +275,6 @@ type tibberCurrentPriceResp struct {
 			}
 		}
 	}
-}
-
-func (s *Server) tibberCurrentPrice(ctx context.Context) (tibberCurrentPrice, error) {
-	var resp tibberCurrentPriceResp
 
 	req := s.tibberRequest(tibberCurrentPriceQuery)
 
@@ -273,7 +282,7 @@ func (s *Server) tibberCurrentPrice(ctx context.Context) (tibberCurrentPrice, er
 		return tibberCurrentPrice{}, err
 	}
 
-	return resp.Data.Viewer.Home.CurrentSubscription.PriceInfo.Current, nil
+	return resp.Viewer.Home.CurrentSubscription.PriceInfo.Current, nil
 }
 
 func (s *Server) tibberRequest(query string) *graphql.Request {
@@ -289,6 +298,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 
 	if tcp, err := s.tibberCurrentPrice(r.Context()); err == nil {
 		s.TibberCurrentPrice = tcp
+		s.log("TibberCurrentPrice: %v", tcp)
 	}
 
 	json.NewEncoder(w).Encode(s.Index)
@@ -336,8 +346,10 @@ func (s *Server) kofi(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if m.Bounds().Eq(gfx.IR(0, 0, 8, 8)) {
-		framebuffer.SetImage(m)
-		screen.Draw(framebuffer)
+		if framebuffer != nil {
+			framebuffer.SetImage(m)
+			screen.Draw(framebuffer)
+		}
 	}
 }
 
