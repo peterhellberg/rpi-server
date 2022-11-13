@@ -54,14 +54,14 @@ func main() {
 
 	go hs.ListenAndServe()
 
+	var toggle bool
+
 	for {
 		events, err := device.Read()
 		if err != nil {
 			fmt.Printf("device.Read() Error: %v\n", err)
 			os.Exit(1)
 		}
-
-		var toggle bool
 
 		for _, ev := range events {
 			switch ev.Type {
@@ -83,8 +83,6 @@ func main() {
 
 					if toggle {
 						draw(fb, 0, 0, 8, 8, color.New(255, 255, 255))
-					} else {
-						fb = screen.NewFrameBuffer()
 					}
 				case evdev.KEY_UP:
 					fmt.Println("[UP] YELLOW")
