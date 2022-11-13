@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,29 +14,12 @@ import (
 	"time"
 
 	evdev "github.com/MaitreDede/golang-evdev"
-	ble "github.com/go-ble/ble"
-	dev "github.com/go-ble/ble/examples/lib/dev"
 	screen "github.com/nathany/bobblehat/sense/screen"
 	color "github.com/nathany/bobblehat/sense/screen/color"
 	gfx "github.com/peterhellberg/gfx"
-	ruuvitag "github.com/peterhellberg/ruuvitag"
 )
 
-var (
-	rawData1    = map[string]timestampedRAWv1{}
-	rawData2    = map[string]timestampedRAWv2{}
-	framebuffer = screen.NewFrameBuffer()
-)
-
-type timestampedRAWv1 struct {
-	ruuvitag.RAWv1
-	Time time.Time
-}
-
-type timestampedRAWv2 struct {
-	ruuvitag.RAWv2
-	Time time.Time
-}
+var framebuffer = screen.NewFrameBuffer()
 
 func clear() {
 	framebuffer = screen.NewFrameBuffer()
@@ -71,7 +53,6 @@ func main() {
 	logger.Println(device)
 
 	go hs.ListenAndServe()
-	go bleScan(context.Background(), logger)
 
 	for {
 		events, err := device.Read()
@@ -139,43 +120,6 @@ func handleSignals(logger *log.Logger) {
 	}()
 }
 
-func bleScan(ctx context.Context, logger *log.Logger) {
-	for {
-		d, err := dev.DefaultDevice()
-		if err != nil {
-			logger.Printf("DefaultDevice error: %v\n", err)
-
-			return
-		}
-
-		ble.SetDefaultDevice(d)
-
-		ble.Scan(ble.WithSigHandler(context.WithCancel(ctx)), true,
-			func(a ble.Advertisement) {
-				md := a.ManufacturerData()
-
-				switch {
-				case ruuvitag.IsRAWv1(md):
-					raw, err := ruuvitag.ParseRAWv1(md)
-					if err == nil {
-						rawData1[a.Addr().String()] = timestampedRAWv1{raw, time.Now()}
-					}
-				case ruuvitag.IsRAWv2(md):
-					raw, err := ruuvitag.ParseRAWv2(md)
-					if err == nil {
-						rawData2[a.Addr().String()] = timestampedRAWv2{raw, time.Now()}
-					}
-				}
-			},
-			func(a ble.Advertisement) bool {
-				md := a.ManufacturerData()
-
-				return ruuvitag.IsRAWv1(md) || ruuvitag.IsRAWv2(md)
-			},
-		)
-	}
-}
-
 func draw(fb *screen.FrameBuffer, a, b, m, n int, c color.Color) {
 	for i := a; i < m; i++ {
 		for j := b; j < n; j++ {
@@ -186,8 +130,11 @@ func draw(fb *screen.FrameBuffer, a, b, m, n int, c color.Color) {
 
 func setup(logger *log.Logger) *http.Server {
 	return &http.Server{
-		Addr:         getAddr(),
-		Handler:      newServer(logWith(logger)),
+		Addr: getAddr(),
+		Handler: newServer(
+			logWith(logger),
+			kofiKeyFromEnv(os.Getenv),
+		),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -203,7 +150,13 @@ func getAddr() string {
 }
 
 func newServer(options ...Option) *Server {
-	s := &Server{logger: log.New(ioutil.Discard, "", 0)}
+	s := &Server{
+		logger: log.New(ioutil.Discard, "", 0),
+		Index: Index{
+			Booted:      time.Now(),
+			Framebuffer: "https://71a5013a854c18d844e976d4f264beb6.balena-devices.com/framebuffer.png?scale=64",
+		},
+	}
 
 	for _, o := range options {
 		o(s)
@@ -228,9 +181,17 @@ func logWith(logger *log.Logger) Option {
 	}
 }
 
+func kofiKeyFromEnv(getenv func(string) string) Option {
+	return func(s *Server) {
+		s.kofiKey = getenv("KOFI_KEY")
+	}
+}
+
 type Server struct {
-	mux    *http.ServeMux
-	logger *log.Logger
+	Index
+	mux     *http.ServeMux
+	logger  *log.Logger
+	kofiKey string
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -246,15 +207,13 @@ func (s *Server) log(format string, v ...interface{}) {
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ruuvitags": map[string]interface{}{
-			"RAWv1": rawData1,
-			"RAWv2": rawData2,
-		},
-	})
+	json.NewEncoder(w).Encode(s.Index)
 }
 
-const kofiKey = "3a1fac0c"
+type Index struct {
+	Booted      time.Time
+	Framebuffer string
+}
 
 type kofiData struct {
 	MessageID string    `json:"message_id"`
@@ -267,7 +226,7 @@ type kofiData struct {
 }
 
 func (s *Server) kofi(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("key") != kofiKey {
+	if r.URL.Query().Get("key") != s.kofiKey || len(s.kofiKey) == 0 {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
