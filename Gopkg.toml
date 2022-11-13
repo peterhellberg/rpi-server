@@ -1,0 +1,12 @@
+[[constraint]]
+  branch = "err-checks"
+  name = "github.com/MaitreDede/golang-evdev"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/nathany/bobblehat"
+
+[prune]
+  non-go = true
+  go-tests = true
+  unused-packages = true
