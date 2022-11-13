@@ -61,6 +61,8 @@ func main() {
 			os.Exit(1)
 		}
 
+		var toggle bool
+
 		for _, ev := range events {
 			switch ev.Type {
 			case evdev.EV_KEY:
@@ -75,7 +77,15 @@ func main() {
 
 				switch ke.Scancode {
 				case evdev.KEY_ENTER:
-					fmt.Println("[ENTER]")
+					toggle = !toggle
+
+					fmt.Println("[ENTER]", toggle)
+
+					if toggle {
+						draw(fb, 0, 0, 8, 8, color.New(255, 255, 255))
+					} else {
+						fb = screen.NewFrameBuffer()
+					}
 				case evdev.KEY_UP:
 					fmt.Println("[UP] YELLOW")
 					draw(fb, 0, 0, 8, 4, color.New(255, 255, 0))
