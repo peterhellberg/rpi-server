@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,10 +15,29 @@ import (
 	"time"
 
 	evdev "github.com/MaitreDede/golang-evdev"
+	graphql "github.com/c7/graphql"
 	screen "github.com/nathany/bobblehat/sense/screen"
 	color "github.com/nathany/bobblehat/sense/screen/color"
 	gfx "github.com/peterhellberg/gfx"
 )
+
+const tibberGraphqlEndpoint = "https://api.tibber.com/v1-beta/gql"
+
+const tibberCurrentPriceQuery = `{
+  viewer {
+    home(id: "11995374-1a29-42e4-9087-e512cb1607a6") {
+      currentSubscription{
+        priceInfo{
+          current{
+            total
+            energy
+            tax
+          }
+        }
+      }
+    }
+  }
+}`
 
 var framebuffer = screen.NewFrameBuffer()
 
@@ -42,8 +62,6 @@ func main() {
 
 	handleSignals(logger)
 
-	hs := setup(logger)
-
 	device, err := openInputDevice(path)
 	if err != nil {
 		logger.Printf("Unable to open input device: %s\nError: %v\n", path, err)
@@ -51,6 +69,14 @@ func main() {
 	}
 
 	logger.Println(device)
+
+	server := newServer(
+		logWith(logger),
+		kofiKeyFromEnv(),
+		tibberTokenFromEnv(),
+	)
+
+	hs := setup(logger, server)
 
 	go hs.ListenAndServe()
 
@@ -136,13 +162,10 @@ func draw(fb *screen.FrameBuffer, a, b, m, n int, c color.Color) {
 	}
 }
 
-func setup(logger *log.Logger) *http.Server {
+func setup(logger *log.Logger, server *Server) *http.Server {
 	return &http.Server{
-		Addr: getAddr(),
-		Handler: newServer(
-			logWith(logger),
-			kofiKeyFromEnv(os.Getenv),
-		),
+		Addr:         getAddr(),
+		Handler:      server,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -160,6 +183,7 @@ func getAddr() string {
 func newServer(options ...Option) *Server {
 	s := &Server{
 		logger: log.New(ioutil.Discard, "", 0),
+		tibber: graphql.NewClient(tibberGraphqlEndpoint),
 		Index: Index{
 			Booted:      time.Now(),
 			Framebuffer: "https://71a5013a854c18d844e976d4f264beb6.balena-devices.com/framebuffer.png?scale=64",
@@ -189,17 +213,25 @@ func logWith(logger *log.Logger) Option {
 	}
 }
 
-func kofiKeyFromEnv(getenv func(string) string) Option {
+func kofiKeyFromEnv() Option {
 	return func(s *Server) {
-		s.kofiKey = getenv("KOFI_KEY")
+		s.kofiKey = os.Getenv("KOFI_KEY")
+	}
+}
+
+func tibberTokenFromEnv() Option {
+	return func(s *Server) {
+		s.kofiKey = os.Getenv("TIBBER_TOKEN")
 	}
 }
 
 type Server struct {
 	Index
-	mux     *http.ServeMux
-	logger  *log.Logger
-	kofiKey string
+	mux         *http.ServeMux
+	logger      *log.Logger
+	tibber      *graphql.Client
+	kofiKey     string
+	tibberToken string
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -212,15 +244,60 @@ func (s *Server) log(format string, v ...interface{}) {
 	s.logger.Printf(format+"\n", v...)
 }
 
+type tibberCurrentPrice struct {
+	Total  float64
+	Energy float64
+	Tax    float64
+}
+
+type tibberCurrentPriceResp struct {
+	Data struct {
+		Viewer struct {
+			Home struct {
+				CurrentSubscription struct {
+					PriceInfo struct {
+						Current tibberCurrentPrice
+					}
+				}
+			}
+		}
+	}
+}
+
+func (s *Server) tibberCurrentPrice(ctx context.Context) (tibberCurrentPrice, error) {
+	var resp tibberCurrentPriceResp
+
+	req := s.tibberRequest(tibberCurrentPriceQuery)
+
+	if err := s.tibber.Run(ctx, req, &resp); err != nil {
+		return tibberCurrentPrice{}, err
+	}
+
+	return resp.Data.Viewer.Home.CurrentSubscription.PriceInfo.Current, nil
+}
+
+func (s *Server) tibberRequest(query string) *graphql.Request {
+	req := graphql.NewRequest(tibberCurrentPriceQuery)
+
+	req.Header.Add("Authorization", "Bearer "+s.tibberToken)
+
+	return req
+}
+
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	if tcp, err := s.tibberCurrentPrice(r.Context()); err == nil {
+		s.TibberCurrentPrice = tcp
+	}
 
 	json.NewEncoder(w).Encode(s.Index)
 }
 
 type Index struct {
-	Booted      time.Time
-	Framebuffer string
+	Booted             time.Time
+	Framebuffer        string
+	TibberCurrentPrice tibberCurrentPrice
 }
 
 type kofiData struct {
