@@ -299,6 +299,8 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	if tcp, err := s.tibberCurrentPrice(r.Context()); err == nil {
 		s.TibberCurrentPrice = tcp
 		s.log("TibberCurrentPrice: %v", tcp)
+	} else {
+		s.log("Error: %v", err)
 	}
 
 	json.NewEncoder(w).Encode(s.Index)
