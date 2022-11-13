@@ -75,19 +75,19 @@ func main() {
 
 				switch ke.Scancode {
 				case evdev.KEY_ENTER:
-					fmt.Println("⏎ ")
+					fmt.Println("[ENTER]")
 				case evdev.KEY_UP:
-					fmt.Println("↑ YELLOW")
+					fmt.Println("[UP] YELLOW")
 					draw(fb, 0, 0, 8, 4, color.New(255, 255, 0))
 				case evdev.KEY_DOWN:
-					fmt.Println("↓ RED")
+					fmt.Println("[DOWN] RED")
 					draw(fb, 0, 4, 8, 8, color.New(255, 0, 0))
 				case evdev.KEY_LEFT:
-					fmt.Println("← BLUE")
+					fmt.Println("[LEFT] BLUE")
 					draw(fb, 0, 0, 4, 8, color.New(0, 0, 255))
 				case evdev.KEY_RIGHT:
-					fmt.Println("→ GREEN")
-					draw(fb, 4, 0, 8, 8, color.New(0, 255, 0))
+					fmt.Println("[RIGHT] GREEN")
+					draw(fb, 4, 0, 8, 8, color.New(0, 128, 0))
 				}
 
 				framebuffer = fb
