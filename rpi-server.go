@@ -382,9 +382,13 @@ func (s *Server) updateFramebuffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if m.Bounds().Eq(gfx.IR(0, 0, 8, 8)) {
+	b := m.Bounds()
+
+	if b.Eq(gfx.IR(0, 0, 8, 8)) {
 		framebuffer.SetImage(m)
 		screen.Draw(framebuffer)
+	} else {
+		s.log("Wrong image bounds %v", b)
 	}
 }
 
