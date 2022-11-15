@@ -381,6 +381,7 @@ func (s *Server) updateFramebuffer(w http.ResponseWriter, r *http.Request) {
 		s.log("Error: %v", err)
 		return
 	}
+	defer r.Body.Close()
 
 	b := m.Bounds()
 
