@@ -297,8 +297,13 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
 	if tcp, err := s.tibberCurrentPrice(r.Context()); err == nil {
-		s.TibberCurrentPrice = tcp
-		s.log("TibberCurrentPrice: %v", tcp)
+		s.TibberCurrentPrice = tibberCurrentPrice{
+			Total:  tcp.Total * 100,
+			Energy: tcp.Energy * 100,
+			Tax:    tcp.Tax * 100,
+		}
+
+		s.log("TibberCurrentPrice: %v", s.TibberCurrentPrice)
 	} else {
 		s.log("Error: %v", err)
 	}
