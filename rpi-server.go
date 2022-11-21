@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"io/ioutil"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -298,9 +299,9 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 
 	if tcp, err := s.tibberCurrentPrice(r.Context()); err == nil {
 		s.TibberCurrentPrice = tibberCurrentPrice{
-			Total:  tcp.Total * 100,
-			Energy: tcp.Energy * 100,
-			Tax:    tcp.Tax * 100,
+			Total:  math.Round(tcp.Total * 100),
+			Energy: math.Round(tcp.Energy * 100),
+			Tax:    math.Round(tcp.Tax * 100),
 		}
 
 		s.log("TibberCurrentPrice: %v", s.TibberCurrentPrice)
